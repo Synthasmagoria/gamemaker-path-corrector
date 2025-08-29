@@ -48,6 +48,7 @@ pub fn verify_list(list: std.ArrayList([]u8)) ArgumentsVerifyListError!void {
 
 pub const ArgumentsProjectPathVerifyError = error{
     Empty,
+    InvalidExtension,
     NotAbsolute,
     PointsToFolder,
     CouldntOpen
@@ -56,14 +57,16 @@ pub fn verify_project_path(path: []u8) !void {
     if (path.len == 0) {
         return ArgumentsProjectPathVerifyError.Empty;
     }
-    if (path[0] != '/') {
-        return ArgumentsProjectPathVerifyError.NotAbsolute;
-    }
-    if (path[path.len - 1] == '/') {
+    if (std.fs.path.basename(path).len == 0) {
         return ArgumentsProjectPathVerifyError.PointsToFolder;
     }
-    const f = std.fs.openFileAbsolute(path, .{}) catch {
+    if (!mem.eql(u8, std.fs.path.extension(path), ".yyp")) {
+        return ArgumentsProjectPathVerifyError.InvalidExtension;
+    }
+    if (!std.fs.path.isAbsolute(path)) {
+        return ArgumentsProjectPathVerifyError.NotAbsolute;
+    }
+    std.fs.accessAbsolute(path, .{}) catch {
         return ArgumentsProjectPathVerifyError.CouldntOpen;
     };
-    defer f.close();
 }
