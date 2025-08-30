@@ -8,6 +8,82 @@ const arguments = @import("args.zig");
 const c = @import("c.zig").c;
 const zpl = @import("zpl.zig");
 
+const ConfidentStringBuilder = struct {
+    buffer: []u8,
+    index: usize,
+    pub fn append(self: *ConfidentStringBuilder, str: []const u8) void {
+        @memcpy(self.buffer[self.index..self.index + str.len], str);
+        self.index += str.len;
+    }
+};
+
+pub fn path_change_basename_noext_alloc(alloc: Allocator, path: []const u8, new_name: []const u8) ![]const u8 {
+    const old_basename_noext = path_basename_noext(path);
+    const renamed_buffer = try alloc.alloc(u8, path.len - old_basename_noext.len + new_name.len);
+    var renamed_builder = ConfidentStringBuilder{.buffer = renamed_buffer, .index = 0};
+
+    const dir_copy_length = path.len - fs.path.basename(path).len;
+    renamed_builder.append(path[0..dir_copy_length]);
+    renamed_builder.append(new_name);
+    renamed_builder.append(fs.path.extension(path));
+    return renamed_builder.buffer;
+}
+
+pub fn path_basename_noext(path: []const u8) []const u8 {
+    return path_truncate_extension(fs.path.basename(path));
+}
+
+const DirectoryFixFilesResult = struct {
+    renamed_files: usize,
+    renamed_resource: bool
+};
+pub fn directory_fix_files(alloc: Allocator, fix: PathFixSuggestion, iterable_dir: fs.Dir, out: *DirectoryFixFilesResult, dry_run: bool) !void {
+    var walker = try iterable_dir.walk(alloc);
+    const new_name = path_basename_noext(fix.new_path);
+    const new_name_lower = try string_allocate_lower(alloc, new_name);
+
+    while (try walker.next()) |item| {
+        if (item.kind != .file) {
+            continue;
+        }
+        const current_name = path_truncate_extension(item.basename);
+        const current_name_lower = try string_allocate_lower(alloc, current_name);
+
+        if (mem.eql(u8, new_name_lower, current_name_lower)) {
+            const renamed_path = try path_change_basename_noext_alloc(alloc, item.path, new_name);
+            //print("{s} -> {s}\n", .{item.path, renamed_path});
+            if (dry_run) {
+                continue;
+            }
+            iterable_dir.rename(item.path, renamed_path) catch |err| {
+                switch (err) {
+                    error.PathAlreadyExists => {
+                        try printerr(
+                            "Couldn't rename {s} to {s}. File already existed. Please rename manually",
+                            .{item.path, renamed_path});
+                        continue;
+                    },
+                    else => {
+                        try printerr(
+                            "Couldn't rename {s} to {s}. Please rename manually",
+                            .{item.path, renamed_path});
+                        continue;
+                    }
+                }
+            };
+            if (mem.eql(u8, fs.path.extension(item.path), ".yy")) {
+                out.renamed_resource = true;
+            } else {
+                out.renamed_files += 1;
+            }
+        }
+    }
+}
+
+pub fn path_truncate_extension(path: []const u8) []const u8 {
+    return path[0..path.len - fs.path.extension(path).len];
+}
+
 pub fn string_lower(str: []u8) void {
     var i: usize = 0;
     while (i < str.len) : (i += 1) {
@@ -17,7 +93,14 @@ pub fn string_lower(str: []u8) void {
     }
 }
 
+pub fn string_allocate_lower(alloc: Allocator, str: []const u8) ![]const u8 {
+    const str_lower = try alloc.dupe(u8, str);
+    string_lower(@constCast(str_lower));
+    return str_lower;
+}
+
 pub fn dupe_string_buffer(buffer: []u8, string: []const u8) []const u8 {
+    // TODO: Return error
     const buffer_slice = buffer[0..string.len];
     @memcpy(buffer_slice, string);
     return buffer_slice;
@@ -67,6 +150,11 @@ pub fn init_fsmap(alloc: Allocator, dir_path: []const u8) !std.StringHashMapUnma
     }
     return fs_map;
 }
+
+const PathFixSuggestion = struct {
+    old_path: []const u8,
+    new_path: []const u8
+};
 
 const RELATIVE_PATH_LENGTH_MAX: usize = 2048;
 const BROKEN_PATH_LIST_STARTING_CAPACITY = 1000;
@@ -158,9 +246,9 @@ pub fn main() !void {
     var project_directory = try fs.openDirAbsolute(absolute_project_directory, .{});
     defer project_directory.close();
     var broken_paths = try std.ArrayList([]const u8).initCapacity(alloc, BROKEN_PATH_LIST_STARTING_CAPACITY);
-    var broken_paths_renamable = try std.ArrayList([]const u8).initCapacity(alloc, BROKEN_PATH_LIST_STARTING_CAPACITY);
     const fsmap = try init_fsmap(alloc, absolute_project_directory);
     var path_buffer = [_]u8{0} ** RELATIVE_PATH_LENGTH_MAX;
+    var path_fix_suggestion = try std.ArrayList(PathFixSuggestion).initCapacity(alloc, BROKEN_PATH_LIST_STARTING_CAPACITY);
 
     for (0..@as(usize, @intCast(resources_array_header.count))) |i| {
         const node = resources.?.get_array_child(i);
@@ -174,12 +262,13 @@ pub fn main() !void {
                         .{rel_path.len, RELATIVE_PATH_LENGTH_MAX});
                     return;
                 }
-                try broken_paths.append(alloc, try alloc.dupe(u8, rel_path));
+                const new_path = try alloc.dupe(u8, rel_path);
+                try broken_paths.append(alloc, try alloc.dupe(u8, new_path));
 
                 const rel_path_lower = @constCast(dupe_string_buffer(&path_buffer, rel_path));
                 string_lower(rel_path_lower);
-                if (fsmap.contains(rel_path_lower)) {
-                    try broken_paths_renamable.append(alloc, try alloc.dupe(u8, rel_path));
+                if (fsmap.get(rel_path_lower)) |old_path| {
+                    try path_fix_suggestion.append(alloc, .{.old_path = old_path, .new_path = new_path});
                 }
             };
         } else {
@@ -190,7 +279,7 @@ pub fn main() !void {
     // TODO: Options to view the path lists and unrenamable paths
     try stdout.print("Path analysis done\n", .{});
     try stdout.print("Broken resource paths: {d}/{d}\n", .{broken_paths.items.len, resources_array_header.count});
-    try stdout.print("Fixable resource paths: {d}/{d}\n", .{broken_paths_renamable.items.len, broken_paths.items.len});
+    try stdout.print("Fixable resource paths: {d}/{d}\n", .{path_fix_suggestion.items.len, broken_paths.items.len});
     try stdout.print("Continue (y/n): ", .{});
     try stdout.flush();
     var continue_input = [1]u8{0};
@@ -199,76 +288,86 @@ pub fn main() !void {
         return;
     };
     string_lower(&continue_input);
+    var dry_run: bool = false;
     if (continue_input[0] == 'y') {
     } else if (continue_input[0] == 'n') {
-        try stdout.print("Aborting\n", .{});
+        try stdout.print("Aborting...\n", .{});
         try stdout.flush();
         return;
+    } else if (continue_input[0] == 'd') {
+        dry_run = true;
     } else {
         try printerr("Invalid input", .{});
         return;
     }
 
-    var current_path_key_buffer = [_]u8{0} ** RELATIVE_PATH_LENGTH_MAX;
-    var rename_path_buffer = [_]u8{0} ** RELATIVE_PATH_LENGTH_MAX;
-    var renamed_dirs: i64 = 0;
-    var renamed_files: i64 = 0;
-    for (broken_paths_renamable.items) |right_path| {
-        var right_path_iterator = try fs.path.componentIterator(right_path);
-        const right_path_resource_component = right_path_iterator.last();
+    var renamed_dirs: usize = 0;
+    var renamed_resources: usize = 0;
+    var renamed_files: usize = 0;
 
-        const current_path_key = @constCast(dupe_string_buffer(&current_path_key_buffer, right_path));
-        string_lower(current_path_key);
-        const current_path = fsmap.get(current_path_key) orelse unreachable;
+    var rename_arena_alloc = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer rename_arena_alloc.deinit();
+    const rename_alloc = rename_arena_alloc.allocator();
 
-        const rename_path = @constCast(dupe_string_buffer(&rename_path_buffer, current_path));
-        const resource_rename_start = right_path_resource_component.?.path.len - right_path_resource_component.?.name.len;
-        @memcpy(rename_path[resource_rename_start..], right_path[resource_rename_start..]);
-        project_directory.rename(current_path, rename_path) catch |err| {
+    for (path_fix_suggestion.items) |path_fix| {
+        if (fs.path.dirname(path_fix.old_path)) |res_dirname| {
+            const resource_directory = project_directory.openDir(res_dirname, .{.iterate = true, .access_sub_paths = false}) catch {
+                // TODO: Handle open directory
+                const msg =
+                    \\Couldn't open directory {s}
+                    \\Please try again, or rename manually
+                    \\
+                ;
+                try printerr(msg, .{res_dirname});
+                continue;
+            };
+            var result = DirectoryFixFilesResult{.renamed_files = 0, .renamed_resource = false};
+            try directory_fix_files(rename_alloc, path_fix, resource_directory, &result, dry_run);
+            renamed_files += result.renamed_files;
+            if (result.renamed_resource) {
+                renamed_resources += 1;
+            }
+        }
+
+        const old_directory = fs.path.dirname(path_fix.old_path);
+        if (old_directory == null) {
+            try printerr("Something went wrong 1. Please contact author.", .{});
+            continue;
+        }
+        const new_directory = fs.path.dirname(path_fix.new_path);
+        if (new_directory == null) {
+            try printerr("Something went wrong 2. Please contact author", .{});
+            continue;
+        }
+        project_directory.rename(old_directory.?, new_directory.?) catch |err| {
             switch (err) {
                 error.PathAlreadyExists => {
-                    try printerr(
-                        "Couldn't rename file '{s}' to '{s}'. It already exists. Please rename manually.",
-                        .{current_path, rename_path});
+                    const msg =
+                        \\Couldn't rename directory '{s}' to '{s}'.
+                        \\Something already exists with the same name.
+                        \\Please rename manually.
+                        \\
+                    ;
+                    try printerr(msg, .{old_directory.?, new_directory.?});
                 },
                 else => {
-                    try printerr(
-                        "Couldn't rename file '{s}' to '{s}'",
-                        .{current_path, rename_path});
+                    const msg =
+                        \\Couldn't rename directory '{s}' to '{s}'.
+                        \\Please rename manually.
+                        \\
+                    ;
+                    try printerr(msg, .{old_directory.?, new_directory.?});
                 }
             }
-            renamed_files -= 1;
-        };
-        renamed_files += 1;
-
-        const right_path_directory_component = right_path_iterator.previous();
-        const directory_rename_start =
-            right_path_directory_component.?.path.len -
-            right_path_directory_component.?.name.len;
-        @memcpy(rename_path[directory_rename_start..], right_path[directory_rename_start..]);
-
-        const directory_end = right_path_directory_component.?.path.len;
-        const current_directory = current_path[0..directory_end];
-        const rename_directory = rename_path[0..directory_end];
-        project_directory.rename(current_directory, rename_directory) catch |err| {
-            switch (err) {
-                error.PathAlreadyExists => {
-                    try printerr(
-                        "Couldn't rename directory '{s}' to '{s}'. It already exists. Please rename manually.",
-                        .{current_directory, rename_directory});
-                },
-                else => {
-                    try printerr("Couldn't rename directory '{s}' to '{s}'",
-                        .{current_directory, rename_directory});
-                }
-            }
-            renamed_dirs -= 1;
+            continue;
         };
         renamed_dirs += 1;
+        _ = rename_arena_alloc.reset(.retain_capacity);
     }
 
-    try stdout.print("Done\n", .{});
-    try stdout.print("Renamed files: {d}/{d}\n", .{renamed_files, broken_paths_renamable.items.len});
-    try stdout.print("Renamed folders: {d}/{d}\n", .{renamed_dirs, broken_paths_renamable.items.len});
+    try stdout.print("Done!\n", .{});
+    try stdout.print("Renamed resources: {d}/{d}\n", .{renamed_resources, path_fix_suggestion.items.len});
+    try stdout.print("Renamed folders: {d}/{d}\n", .{renamed_dirs, path_fix_suggestion.items.len});
+    try stdout.print("Additional renamed files: {d}\n", .{renamed_files});
     try stdout.flush();
 }
