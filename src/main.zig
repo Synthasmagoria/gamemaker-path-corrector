@@ -33,11 +33,64 @@ pub fn path_basename_noext(path: []const u8) []const u8 {
     return path_truncate_extension(fs.path.basename(path));
 }
 
+pub fn yy_set_sound_file_string(alloc: Allocator, dir: fs.Dir, path: []const u8, sound_file_name: []const u8) !void {
+    const f = dir.openFile(path, .{}) catch {
+        try printerr("Couldn't open sound resource at '{s}'\n", .{path});
+        return;
+    };
+    const json5_string = try f.readToEndAlloc(alloc, std.math.maxInt(usize));
+    f.close();
+
+    const zpl_alloc = c.zpl_heap_allocator();
+    defer c.zpl_free_all(zpl_alloc);
+    var root: zpl.AdtNode = undefined;
+    const json5_error = c.zpl_json_parse(@ptrCast(&root), json5_string.ptr, zpl_alloc);
+    switch (json5_error) {
+        c.ZPL_JSON_ERROR_NONE => {},
+        else => {
+            try printerr("Couldn't parse JSON5 in .yy sound resource for some reason '{s}'", .{path});
+            return;
+        }
+    }
+
+    if ((&root).query_type("soundFile", zpl.AdtNodeType.String)) |sound_file_node| {
+        const original_sound_file_string = std.mem.span(sound_file_node.data.string);
+        const original_sound_file_extension = fs.path.extension(original_sound_file_string);
+        sound_file_node.data.string = try std.mem.joinZ(alloc, "", &.{sound_file_name, original_sound_file_extension});
+    }
+
+    const zpl_string = c.zpl_json_write_string(zpl_alloc, @ptrCast(&root), 0);
+    const json5_str_new = mem.span(@as([*:0]u8, @ptrCast(zpl_string)));
+    prints(json5_str_new);
+    prints("");
+    try dir.writeFile(.{.data = json5_str_new, .sub_path = path});
+}
+
+pub fn dupez(alloc: Allocator, str: []const u8) ![*:0]u8 {
+    const strz = try alloc.alloc(u8, str.len + 1);
+    @memcpy(strz[0..str.len], str);
+    strz[str.len] = 0;
+    return @ptrCast(strz.ptr);
+}
+
 const DirectoryFixFilesResult = struct {
     renamed_files: usize,
     renamed_resource: bool
 };
-pub fn directory_fix_files(alloc: Allocator, fix: PathFixSuggestion, iterable_dir: fs.Dir, out: *DirectoryFixFilesResult, dry_run: bool) !void {
+pub fn directory_fix_files(alloc: Allocator, fix: PathFixSuggestion, proj_dir: fs.Dir, dirpath: []const u8, out: *DirectoryFixFilesResult, dry_run: bool) !void {
+    const iterable_dir = proj_dir.openDir(dirpath, .{.iterate = true, .access_sub_paths = false}) catch {
+        const msg =
+            \\Couldn't open directory {s}
+            \\Please try again, or rename manually
+            \\
+        ;
+        try printerr(msg, .{dirpath});
+        return;
+    };
+    const is_sound_resource = std.mem.containsAtLeast(u8, dirpath, 1, "sounds" ++ [_]u8{fs.path.sep});
+    if (is_sound_resource) {
+        print("{s} Was sound resource\n", .{dirpath});
+    }
     var walker = try iterable_dir.walk(alloc);
     const new_name = path_basename_noext(fix.new_path);
     const new_name_lower = try string_allocate_lower(alloc, new_name);
@@ -73,6 +126,9 @@ pub fn directory_fix_files(alloc: Allocator, fix: PathFixSuggestion, iterable_di
             };
             if (mem.eql(u8, fs.path.extension(item.path), ".yy")) {
                 out.renamed_resource = true;
+                if (is_sound_resource) {
+                    try yy_set_sound_file_string(alloc, iterable_dir, renamed_path, path_basename_noext(renamed_path));
+                }
             } else {
                 out.renamed_files += 1;
             }
@@ -311,18 +367,8 @@ pub fn main() !void {
 
     for (path_fix_suggestion.items) |path_fix| {
         if (fs.path.dirname(path_fix.old_path)) |res_dirname| {
-            const resource_directory = project_directory.openDir(res_dirname, .{.iterate = true, .access_sub_paths = false}) catch {
-                // TODO: Handle open directory
-                const msg =
-                    \\Couldn't open directory {s}
-                    \\Please try again, or rename manually
-                    \\
-                ;
-                try printerr(msg, .{res_dirname});
-                continue;
-            };
             var result = DirectoryFixFilesResult{.renamed_files = 0, .renamed_resource = false};
-            try directory_fix_files(rename_alloc, path_fix, resource_directory, &result, dry_run);
+            try directory_fix_files(rename_alloc, path_fix, project_directory, res_dirname, &result, dry_run);
             renamed_files += result.renamed_files;
             if (result.renamed_resource) {
                 renamed_resources += 1;
@@ -339,29 +385,33 @@ pub fn main() !void {
             try printerr("Something went wrong 2. Please contact author", .{});
             continue;
         }
-        project_directory.rename(old_directory.?, new_directory.?) catch |err| {
-            switch (err) {
-                error.PathAlreadyExists => {
-                    const msg =
-                        \\Couldn't rename directory '{s}' to '{s}'.
-                        \\Something already exists with the same name.
-                        \\Please rename manually.
-                        \\
-                    ;
-                    try printerr(msg, .{old_directory.?, new_directory.?});
-                },
-                else => {
-                    const msg =
-                        \\Couldn't rename directory '{s}' to '{s}'.
-                        \\Please rename manually.
-                        \\
-                    ;
-                    try printerr(msg, .{old_directory.?, new_directory.?});
+
+        if (!dry_run) {
+            project_directory.rename(old_directory.?, new_directory.?) catch |err| {
+                switch (err) {
+                    error.PathAlreadyExists => {
+                        const msg =
+                            \\Couldn't rename directory '{s}' to '{s}'.
+                            \\Something already exists with the same name.
+                            \\Please rename manually.
+                            \\
+                        ;
+                        try printerr(msg, .{old_directory.?, new_directory.?});
+                    },
+                    else => {
+                        const msg =
+                            \\Couldn't rename directory '{s}' to '{s}'.
+                            \\Please rename manually.
+                            \\
+                        ;
+                        try printerr(msg, .{old_directory.?, new_directory.?});
+                    }
                 }
-            }
-            continue;
-        };
-        renamed_dirs += 1;
+                continue;
+            };
+            renamed_dirs += 1;
+        }
+
         _ = rename_arena_alloc.reset(.retain_capacity);
     }
 
