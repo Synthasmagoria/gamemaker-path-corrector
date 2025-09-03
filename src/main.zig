@@ -61,8 +61,6 @@ pub fn yy_set_sound_file_string(alloc: Allocator, dir: fs.Dir, path: []const u8,
 
     const zpl_string = c.zpl_json_write_string(zpl_alloc, @ptrCast(&root), 0);
     const json5_str_new = mem.span(@as([*:0]u8, @ptrCast(zpl_string)));
-    prints(json5_str_new);
-    prints("");
     try dir.writeFile(.{.data = json5_str_new, .sub_path = path});
 }
 
@@ -88,9 +86,6 @@ pub fn directory_fix_files(alloc: Allocator, fix: PathFixSuggestion, proj_dir: f
         return;
     };
     const is_sound_resource = std.mem.containsAtLeast(u8, dirpath, 1, "sounds" ++ [_]u8{fs.path.sep});
-    if (is_sound_resource) {
-        print("{s} Was sound resource\n", .{dirpath});
-    }
     var walker = try iterable_dir.walk(alloc);
     const new_name = path_basename_noext(fix.new_path);
     const new_name_lower = try string_allocate_lower(alloc, new_name);
@@ -200,7 +195,7 @@ pub fn init_fsmap(alloc: Allocator, dir_path: []const u8) !std.StringHashMapUnma
             mem.eql(u8, fs.path.extension(item.path), ".yy")) {
             const k = try alloc.alloc(u8, item.path.len);
             if (builtin.os.tag == .windows) {
-                std.mem.replace(u8, item.path, fs.path.sep_windows, fs.path.sep_posix, k);
+                _ = std.mem.replace(u8, item.path, &.{fs.path.sep_windows}, &.{fs.path.sep_posix}, k);
             }
             string_lower(k);
             const v = try alloc.dupe(u8, item.path);
