@@ -54,6 +54,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    if (target.result.os.tag == .windows) {
+        exe.root_module.linkSystemLibrary("ws2_32", .{.needed = true});
+    }
     exe.root_module.addIncludePath(.{.src_path = .{.sub_path = "src/lib/zpl", .owner = b}});
     exe.root_module.addCSourceFile(.{.file = .{.src_path = .{.sub_path = "src/lib/zpl/zpl.c", .owner = b}}});
 

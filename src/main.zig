@@ -1,7 +1,7 @@
 const std = @import("std");
 const fs = std.fs;
 const mem = std.mem;
-const builtin = std.builtin;
+const builtin = @import("builtin");
 const print = std.debug.print;
 const Allocator = std.mem.Allocator;
 const arguments = @import("args.zig");
@@ -198,7 +198,10 @@ pub fn init_fsmap(alloc: Allocator, dir_path: []const u8) !std.StringHashMapUnma
         if (item.kind == .file and
             mem.count(u8, item.path, &.{fs.path.sep}) == 2 and
             mem.eql(u8, fs.path.extension(item.path), ".yy")) {
-            const k = try alloc.dupe(u8, item.path);
+            const k = try alloc.alloc(u8, item.path.len);
+            if (builtin.os.tag == .windows) {
+                std.mem.replace(u8, item.path, fs.path.sep_windows, fs.path.sep_posix, k);
+            }
             string_lower(k);
             const v = try alloc.dupe(u8, item.path);
             try fs_map.put(alloc, k, v);
