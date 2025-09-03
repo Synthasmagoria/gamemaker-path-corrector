@@ -9,7 +9,9 @@ The program will appear in zig-out/bin/
 
 ## --- GAMEMAKER PATH CORRECTOR ---
 Usage: gamemaker-path-corrector <absolute project path>
+
 Example: gamemaker-path-corrector "C:\repos\gamemaker-project\gamemaker-project.yyp"
+
 If on windows, make sure that case sensitivity is turned on for project folder
 https://learn.microsoft.com/en-us/windows/wsl/case-sensitivity#change-the-case-sensitivity-of-files-and-directories
 
@@ -36,8 +38,8 @@ then feel free to contact me on Discord (synthasmagoria).
 I might update the tool to meet your needs.
 
 ## Tested versions
-IDE v2024.13.1.242
-IDE v2024.1400.0.874
+- IDE v2024.13.1.242
+- IDE v2024.1400.0.874
 
 ## Dependencies
 This library uses ZLP for JSON5 parsing.
