@@ -1,0 +1,8 @@
+{
+    "[zig]": {
+        "editor.formatOnSave": false,
+        "editor.defaultFormatter": "ziglang.vscode-zig",
+        "editor.stickyScroll.defaultModel": "foldingProviderModel",
+        "files.eol": "\n"
+    }
+}
