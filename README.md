@@ -8,7 +8,7 @@ After that: `zig build run`
 The program will appear in zig-out/bin/
 
 ## --- GAMEMAKER PATH CORRECTOR ---
-Usage: gamemaker-path-corrector <absolute project path>
+Usage: gamemaker-path-corrector < absolute project path >
 
 Example: gamemaker-path-corrector "C:\repos\gamemaker-project\gamemaker-project.yyp"
 
