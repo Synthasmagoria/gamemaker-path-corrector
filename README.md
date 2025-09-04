@@ -42,5 +42,5 @@ I might update the tool to meet your needs.
 - IDE v2024.1400.0.874
 
 ## Dependencies
-This library uses ZLP for JSON5 parsing.
+This library uses ZPL for JSON5 parsing.
 https://github.com/zpl-c/zpl/tree/master
