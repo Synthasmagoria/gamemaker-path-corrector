@@ -1,11 +1,13 @@
+## Gamemaker Path Corrector
+When opening your Windows developed Gamemaker project on a Linux machine you might get hit with hundreds of simple path errors due to case insensitive capitalization.
+
+<img width="612" height="568" alt="Screenshot from 2025-09-30 20-37-42" src="https://github.com/user-attachments/assets/6a0bc0e5-e8f4-445a-b56a-fed785a77039" />
+
+Normally you'd have to amend these errors by hand, but this tool automate this process.
+
 ## WARNING
 BACK UP YOUR PROJECT BEFORE USING THIS TOOL!
 It will change folder- and filenames in your project directory.
-
-## Build instructions
-Make sure that Zig is installed on your computer
-After that: `zig build run`
-The program will appear in zig-out/bin/
 
 ## --- GAMEMAKER PATH CORRECTOR ---
 Usage: gamemaker-path-corrector < absolute project path >
@@ -31,15 +33,20 @@ Cannot merge folders with the same name.
 e.g. sprites/sprPlayerIdle & sprites/sprplayeridle
 In the case of folders with the same name like this the tool will spit out a list of errors and you'll have to rename manually.
 
+## Tested versions
+- IDE v2024.13.1.242
+- IDE v2024.1400.0.874
+
+## Build instructions
+Make sure that Zig is installed on your computer
+After that: `zig build run`
+The program will appear in zig-out/bin/
+
 ## Feature requests
 The tool hasn't currently been tested on a lot of projects.
 So if it doesn't manage to rename something in your project as you might expect,
 then feel free to contact me on Discord (synthasmagoria).
 I might update the tool to meet your needs.
-
-## Tested versions
-- IDE v2024.13.1.242
-- IDE v2024.1400.0.874
 
 ## Dependencies
 This library uses ZPL for JSON5 parsing.
